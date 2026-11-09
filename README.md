@@ -20,8 +20,22 @@ CSS Module 的类名后缀（`_regionArea` / `_panelList`）与结构位置，�
 
 ## 安装
 
-在 DSH 里用插件管理安装本目录（`plugin_manager` → `install_bundle`，target 为本目录绝对路径），
+```bash
+git clone https://github.com/yhPrime/dsh-sidebar-left-split.git
+```
+
+在 DSH 里用插件管理安装（`plugin_manager` → `install_bundle`，target 为克隆下来的目录绝对路径），
 然后刷新页面；插件管理里会看到「侧栏工作区分隔 / Sidebar workspace splitter」。
+
+> 建议先 `pnpm pack` 出 tarball、再用 tarball 的绝对路径当 target：直接传目录会建 pnpm link（`link:`），
+> 之后卸载插件时可能连带删掉源码目录。
+
+## 测试
+
+```bash
+node test/check.mjs        # 静态自检 40 项
+node test/client.test.mjs  # 行为自检 45 项（最小 DOM 替身，无浏览器）
+```
 
 ## 用法
 

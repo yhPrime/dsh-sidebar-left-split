@@ -1,0 +1,13 @@
+# 依赖与构建产物
+node_modules/
+dist/
+build/
+_tmp/
+
+# 日志与缓存
+*.log
+__pycache__/
+*.pyc
+
+# 本地备份
+备份/
