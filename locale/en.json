@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Sidebar workspace splitter",
-    "description": "Drag the seam above the workspace list to resize it; the panel nav above gains a scrollbar when it shrinks."
+    "description": "Drag the seam above the workspace list to resize it — one panel row per step, at least one row, at most every row visible; the panel nav gains a scrollbar when it shrinks."
   }
 }

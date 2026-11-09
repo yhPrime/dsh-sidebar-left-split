@@ -1,10 +1,11 @@
 /**
- * 行为自检（无浏览器）：用最小 DOM 替身跑客户端半的扫描 / 手势 / 记忆 / 卸载。
+ * 行为自检（无浏览器）：用最小 DOM 替身跑客户端半的扫描 / 磁吸拖动 / 记忆 / 卸载。
  * 运行：node test/client.test.mjs
  *
- * 布局模型是唯一真值：列顶偏移 100、列底固定段 60、列高可变、面板列表高
- * = CSS 变量值（没设变量时等于自然高度）。替身据此算 getBoundingClientRect，
- * 于是「拖动改高度 → 工作区让位 → 越界回收」这条链能离线走完。
+ * 布局模型是唯一真值：面板列表由 5 行按钮组成（每行 36px、行距 2px、自然高 188px），
+ * 列顶偏移 100、列底固定段 60、列高可变，工作区取剩余高度。
+ * 替身据此算 getBoundingClientRect / scrollHeight，于是「拖动按整行跳 → 最小一行 →
+ * 全显示到顶 → 矮窗回收」这条链能离线走完。
  */
 let failed = 0;
 let passed = 0;
@@ -21,15 +22,20 @@ function check(name, condition) {
 const NAV_VAR = '--dsh-split-nav';
 const layout = {
   topOffset: 100,
-  navHeight: 160, // 面板列表自然高度
   rootHeight: 800,
   foot: 60,
-  gap: 8, // 面板列表的 margin-bottom
+  navGap: 8, // 面板列表的 margin-bottom
+  rowHeight: 36,
+  rowGap: 2,
+  rowCount: 5,
+  navHeight: null, // 由 CSS 变量驱动；null = 内容自然高度
 };
+const naturalNav = () =>
+  layout.rowCount * layout.rowHeight + Math.max(0, layout.rowCount - 1) * layout.rowGap;
+const navHeightNow = () => (layout.navHeight === null ? naturalNav() : layout.navHeight);
 
 class FakeStyle {
-  constructor(element) {
-    this.element = element;
+  constructor() {
     this.props = {};
   }
   setProperty(name, value) {
@@ -38,6 +44,7 @@ class FakeStyle {
   }
   removeProperty(name) {
     delete this.props[name];
+    if (name === NAV_VAR) layout.navHeight = null;
   }
   getPropertyValue(name) {
     return this.props[name] ?? '';
@@ -49,13 +56,14 @@ class FakeElement {
     this.tagName = tag.toUpperCase();
     this.className = className;
     this.classList = className === '' ? [] : className.split(' ');
-    this.style = new FakeStyle(this);
+    this.style = new FakeStyle();
     this.attributes = {};
     this.children = [];
     this.parentElement = null;
     this.isConnected = true;
     this.listeners = new Map();
     this.role = 'plain';
+    this.rowIndex = 0;
   }
   getAttribute(name) {
     return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null;
@@ -92,10 +100,18 @@ class FakeElement {
     const index = this.parentElement?.children.indexOf(this) ?? -1;
     if (index >= 0) this.parentElement.children.splice(index, 1);
   }
+  get scrollHeight() {
+    if (this.role === 'nav') return naturalNav();
+    return 0;
+  }
   getBoundingClientRect() {
-    if (this.role === 'nav') return { top: layout.topOffset, height: layout.navHeight };
+    if (this.role === 'row') {
+      const top = layout.topOffset + this.rowIndex * (layout.rowHeight + layout.rowGap);
+      return { top, height: layout.rowHeight };
+    }
+    if (this.role === 'nav') return { top: layout.topOffset, height: navHeightNow() };
     if (this.role === 'region') {
-      const top = layout.topOffset + layout.navHeight + layout.gap;
+      const top = layout.topOffset + navHeightNow() + layout.navGap;
       return { top, height: Math.max(0, layout.rootHeight - top - layout.foot) };
     }
     return { top: layout.topOffset, height: layout.rootHeight };
@@ -217,18 +233,25 @@ globalThis.localStorage = localStorageStub;
 
 await import('../client.js');
 
-const STORAGE_KEY = 'dsh-sidebar-left-split:nav-height';
+const STORAGE_KEY = 'dsh-sidebar-left-split:nav-rows';
+const LEGACY_KEY = 'dsh-sidebar-left-split:nav-height';
 const ROOT_ATTR = 'data-dsh-sidebar-split';
 const HOVER_ATTR = 'data-dsh-split-hover';
 const DRAG_ATTR = 'data-dsh-split-drag';
 const RAIL_ATTR = 'data-dsh-split-rail';
 
-/** 搭一棵与宿主同构的列：根 > nav(面板列表) + region(工作区)。 */
+/** 搭一棵与宿主同构的列：根 > nav(5 行按钮) + region(工作区)。 */
 function buildColumn() {
   const root = new FakeElement('div', 'wtg9ga_root');
   root.role = 'root';
   const nav = new FakeElement('nav', 'wtg9ga_panelList');
   nav.role = 'nav';
+  for (let index = 0; index < layout.rowCount; index += 1) {
+    const row = new FakeElement('button');
+    row.role = 'row';
+    row.rowIndex = index;
+    nav.appendChild(row);
+  }
   const region = new FakeElement('div', 'wtg9ga_regionArea');
   region.role = 'region';
   root.appendChild(nav);
@@ -239,6 +262,7 @@ function buildColumn() {
 
 /** 让排队的扫描跑完（插件用 120ms 节流）。 */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 200));
+const seamOf = (region) => region.getBoundingClientRect().top;
 
 console.log('module registration');
 check('loader called once', registered !== null);
@@ -257,16 +281,18 @@ const ctx = {
     if (typeof dispose === 'function') disposers.push(dispose);
   },
 };
+storage.set(LEGACY_KEY, '200'); // 旧版本留下的像素值，不该被当成行数
 const column = buildColumn();
 plugin.apply(ctx);
 check('registers two effects', disposers.length === 2);
+check('legacy pixel key is dropped', storage.has(LEGACY_KEY) === false);
 
 const styleTag = head.children.find((child) => child.attributes['data-plugin-css'] === 'dsh-sidebar-left-split');
 check('appends the scoped stylesheet', styleTag !== undefined);
-check('stylesheet scopes to the column marker', styleTag.textContent.includes(`[${ROOT_ATTR}]`));
+check('stylesheet scopes to the column marker', styleTag.textContent.includes('[' + ROOT_ATTR + ']'));
 check('panel list scrolls only when needed', styleTag.textContent.includes('overflow-y: auto'));
 check('seam is drawn with theme tokens', styleTag.textContent.includes('--dsw-alias-border-l1'));
-check('rail mode skips the height override', styleTag.textContent.includes(`:not([${RAIL_ATTR}])`));
+check('rail mode skips the height override', styleTag.textContent.includes(':not([' + RAIL_ATTR + '])'));
 
 console.log('scan');
 check('marks the column it took over', column.root.getAttribute(ROOT_ATTR) === '');
@@ -275,7 +301,8 @@ check('no height is imposed before the first drag', column.root.style.getPropert
 check('every gesture is listened for', ['pointermove', 'pointerleave', 'pointerdown', 'dblclick'].every((type) => column.root.listenerCount(type) === 1));
 
 console.log('hover');
-const seam = column.region.getBoundingClientRect().top;
+const seam = seamOf(column.region);
+check('natural nav height is the whole row stack', Math.abs(seam - (layout.topOffset + naturalNav() + layout.navGap)) < 0.001);
 column.root.dispatch('pointermove', { clientY: seam });
 check('hovering the seam raises the divider', column.root.getAttribute(HOVER_ATTR) === '');
 column.root.dispatch('pointermove', { clientY: seam + 60 });
@@ -284,17 +311,32 @@ column.root.dispatch('pointermove', { clientY: seam });
 column.root.dispatch('pointerleave', {});
 check('leaving the column clears the divider', column.root.getAttribute(HOVER_ATTR) === null);
 
-console.log('drag');
+console.log('magnetic drag');
 column.root.dispatch('pointerdown', { clientY: seam });
 check('pressing the seam starts a drag', column.root.getAttribute(DRAG_ATTR) === '');
 check('drag listens on the document', documentStub.listenerCount('pointermove') === 1 && documentStub.listenerCount('pointerup') === 1);
-documentStub.dispatch('pointermove', { clientY: seam + 40 });
-check('dragging down grows the workspace', column.root.style.getPropertyValue(NAV_VAR) === '200px' && layout.navHeight === 200);
-check('the workspace gave the space back', column.region.getBoundingClientRect().height === 432);
+
+// 往上拖 60px：188 → 128，磁吸到第 3 行（3×36 + 2×2 = 112）
+documentStub.dispatch('pointermove', { clientY: seam - 60 });
+check('dragging up snaps to whole rows', column.root.style.getPropertyValue(NAV_VAR) === '112px');
+check('three rows are exactly 3×36 + 2×2', layout.navHeight === 112);
+check('the workspace took the freed space', column.region.getBoundingClientRect().height === 520);
+
+// 中间位置也吸回整行：往上 70px（188 → 118）离第 3 行更近，仍吸到 112
+documentStub.dispatch('pointermove', { clientY: seam - 70 });
+check('a half-row offset still snaps back', column.root.style.getPropertyValue(NAV_VAR) === '112px');
+
+// 往下拖回 172px：吸到第 5 行 = 全部显示（188px，等于内容总高，不出滚动条）
+documentStub.dispatch('pointermove', { clientY: seam + 60 });
+check('dragging down grows the list', layout.navHeight === 188);
+check('all rows visible equals the content height', column.root.style.getPropertyValue(NAV_VAR) === '188px');
+
+// 再往下拖：已经到顶，不允许再长
+documentStub.dispatch('pointermove', { clientY: seam + 260 });
+check('cannot drag past the last row', column.root.style.getPropertyValue(NAV_VAR) === '188px');
+check('and the workspace is not squeezed further', column.region.getBoundingClientRect().height === 444);
 documentStub.dispatch('pointerup', {});
-check('drop ends the drag', column.root.getAttribute(DRAG_ATTR) === null);
-check('drop persists the height', storage.get(STORAGE_KEY) === '200');
-check('document listeners are released', documentStub.listenerCount('pointermove') === 0);
+check('drop remembers the full row count', storage.get(STORAGE_KEY) === '5');
 
 console.log('squeeze');
 layout.rootHeight = 400;
@@ -302,14 +344,26 @@ const observer = FakeResizeObserver.instances.at(-1);
 check('resize observer watches the column', observer.targets.has(column.root));
 observer.trigger();
 check('a short window reclaims the workspace minimum', column.region.getBoundingClientRect().height === 120);
-check('and the nav pays for it', column.root.style.getPropertyValue(NAV_VAR) === '112px');
+check('and the nav pays in whole rows', column.root.style.getPropertyValue(NAV_VAR) === '112px');
+
+console.log('floor');
+layout.rootHeight = 800;
+const floorSeam = seamOf(column.region);
+column.root.dispatch('pointerdown', { clientY: floorSeam });
+documentStub.dispatch('pointermove', { clientY: floorSeam - 600 });
+check('one row is the floor', column.root.style.getPropertyValue(NAV_VAR) === '36px');
+documentStub.dispatch('pointermove', { clientY: floorSeam - 2000 });
+check('dragging further up keeps one row', column.root.style.getPropertyValue(NAV_VAR) === '36px');
+documentStub.dispatch('pointerup', {});
+check('drop ends the drag', column.root.getAttribute(DRAG_ATTR) === null);
+check('drop remembers the row count', storage.get(STORAGE_KEY) === '1');
+check('document listeners are released', documentStub.listenerCount('pointermove') === 0);
 
 console.log('reset');
-layout.rootHeight = 800;
-const resetSeam = column.region.getBoundingClientRect().top;
+const resetSeam = seamOf(column.region);
 column.root.dispatch('dblclick', { clientY: resetSeam });
 check('double click restores the automatic height', column.root.style.getPropertyValue(NAV_VAR) === '');
-check('double click forgets the stored height', storage.has(STORAGE_KEY) === false);
+check('double click forgets the row count', storage.has(STORAGE_KEY) === false);
 column.root.dispatch('dblclick', { clientY: resetSeam + 80 });
 check('double click away from the seam does nothing', column.root.style.getPropertyValue(NAV_VAR) === '');
 
@@ -318,9 +372,9 @@ column.root.addClass('wtg9ga_collapsed');
 FakeMutationObserver.last.trigger();
 await settle();
 check('the rail is marked', column.root.getAttribute(RAIL_ATTR) === '');
-column.root.dispatch('pointermove', { clientY: column.region.getBoundingClientRect().top });
+column.root.dispatch('pointermove', { clientY: seamOf(column.region) });
 check('the seam does not react in the rail', column.root.getAttribute(HOVER_ATTR) === null);
-column.root.dispatch('pointerdown', { clientY: column.region.getBoundingClientRect().top });
+column.root.dispatch('pointerdown', { clientY: seamOf(column.region) });
 check('the rail cannot start a drag', column.root.getAttribute(DRAG_ATTR) === null);
 
 console.log('remount');
@@ -331,13 +385,13 @@ check('the new column is taken over', second.root.getAttribute(ROOT_ATTR) === ''
 check('the old column is released', column.root.getAttribute(ROOT_ATTR) === null);
 check('the old column keeps no inline height', column.root.style.getPropertyValue(NAV_VAR) === '');
 
-console.log('stored height restore');
-storage.set(STORAGE_KEY, '240');
+console.log('stored rows restore');
+storage.set(STORAGE_KEY, '2');
 const third = buildColumn();
 FakeMutationObserver.last.trigger();
 await settle();
-check('a remembered height is re-applied', third.root.style.getPropertyValue(NAV_VAR) === '240px');
-check('and it is clamped to the workspace minimum', third.region.getBoundingClientRect().height >= 120);
+check('a remembered row count is re-applied', third.root.style.getPropertyValue(NAV_VAR) === '74px');
+check('two rows are 2×36 + 2', layout.navHeight === 74);
 
 console.log('dispose');
 for (const dispose of disposers) dispose();

@@ -57,11 +57,13 @@ check('targets the panel nav by class suffix', clientSource.includes('_panelList
 check('panel nav becomes its own scroll port', /overflow-y:\s*auto/.test(clientSource));
 check('only appears while overflowing (auto, not scroll)', !/overflow-y:\s*scroll/.test(clientSource));
 check('workspace region keeps a minimum height', /REGION_MIN_PX\s*=\s*120/.test(clientSource));
-check('nav can be squeezed down to one row', /NAV_MIN_PX\s*=\s*28/.test(clientSource));
+check('magnetic floor is one row', /MIN_ROWS\s*=\s*1/.test(clientSource) && clientSource.includes('rowsForHeight'));
+check('row grid is measured, not hardcoded', clientSource.includes('measureGrid') && clientSource.includes('rowHeight'));
+check('dragging stops once every row is visible', clientSource.includes('scrollHeight'));
 check('drag seam is hit-tested in pixels', /HIT_PX\s*=\s*5/.test(clientSource));
 check('uses pointer events, not mouse-only ones', clientSource.includes('"pointerdown"') && clientSource.includes('"pointermove"'));
-check('restores the dragged height from storage', clientSource.includes('localStorage.getItem'));
-check('persists the dragged height', clientSource.includes('localStorage.setItem'));
+check('remembers a row count, not pixels', clientSource.includes('nav-rows') && clientSource.includes('localStorage.getItem'));
+check('persists the row count', clientSource.includes('localStorage.setItem'));
 check('double click restores the automatic height', clientSource.includes('"dblclick"'));
 check('leaves the collapsed rail alone', clientSource.includes('_collapsed'));
 check('measures the real column', clientSource.includes('ResizeObserver'));
