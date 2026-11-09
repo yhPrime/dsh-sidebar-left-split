@@ -1,9 +1,29 @@
 {
   "name": "dsh-sidebar-left-split",
   "version": "0.2.0",
-  "private": true,
-  "description": "Drag the seam above the sidebar workspace list to resize it; the panel nav above scrolls when squeezed.",
+  "description": "Resizable splitter between the sidebar workspace list and the global panel nav: magnetic row-by-row dragging, one row minimum, every row visible maximum.",
   "type": "module",
+  "license": "MIT",
+  "author": "yhPrime",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "sidebar",
+    "workspace",
+    "splitter",
+    "resize"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yhPrime/dsh-sidebar-left-split.git"
+  },
+  "homepage": "https://github.com/yhPrime/dsh-sidebar-left-split#readme",
+  "bugs": {
+    "url": "https://github.com/yhPrime/dsh-sidebar-left-split/issues"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
