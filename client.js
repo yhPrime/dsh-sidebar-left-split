@@ -41,6 +41,10 @@ window.__ModuleLoader__.load({
     const SCAN_DELAY_MS = 120;
     /** 拖动结束后再摘 click 监听，保证本轮点击已被吞掉。 */
     const SWALLOW_CLICK_MS = 0;
+    /** 滚轮累计超过这个像素才跳一行（触控板的小碎步先攒着）。 */
+    const WHEEL_STEP_PX = 16;
+    /** 非滚轮方式的滚动（拖滚动条、键盘）停下多久后对齐到整行。 */
+    const SCROLL_SNAP_MS = 90;
     /** 存「留几行」。 */
     const STORAGE_KEY = "dsh-sidebar-left-split:nav-rows";
     /** 旧版本存的是像素高度，读到就清掉，避免被当成行数。 */
@@ -349,11 +353,60 @@ body [${ROOT_ATTR}][${DRAG_ATTR}] {
             writeStoredRows(null);
           };
 
+          /**
+           * 面板列表被压小、要滚动时也按整行跳：
+           *  - `wheel` 自己接管：一行一步；触控板的小碎步先攒到 WHEEL_STEP_PX 再跳；
+           *  - 拖滚动条 / 键盘这类滚动，停下 SCROLL_SNAP_MS 后对齐到最近整行。
+           * 全部行都露出来（没得滚）时不拦事件，滚轮照常交给页面。
+           */
+          const attachScrollSnap = (record) => {
+            if (record.scrollNav === record.nav) return;
+            if (record.scrollNav !== null) {
+              record.scrollNav.removeEventListener("wheel", record.onWheel);
+              record.scrollNav.removeEventListener("scroll", record.onScroll);
+            }
+            record.scrollNav = record.nav;
+            if (record.nav === null) return;
+            record.onWheel = (event) => {
+              const nav = record.nav;
+              if (nav === null || isRail(record.root)) return;
+              const scrollable = nav.scrollHeight - nav.clientHeight;
+              if (scrollable <= 1) return;
+              const grid = measureGrid(nav);
+              if (grid === null || grid.count === 0) return;
+              const step = grid.step > 0 ? grid.step : grid.rowHeight;
+              event.preventDefault();
+              record.wheelAcc += event.deltaY;
+              if (Math.abs(record.wheelAcc) < WHEEL_STEP_PX) return;
+              const direction = record.wheelAcc > 0 ? 1 : -1;
+              record.wheelAcc = 0;
+              const from = Math.round(nav.scrollTop / step) * step;
+              nav.scrollTop = Math.min(scrollable, Math.max(0, from + direction * step));
+            };
+            record.onScroll = () => {
+              if (record.snapTimer !== null) window.clearTimeout(record.snapTimer);
+              record.snapTimer = window.setTimeout(() => {
+                record.snapTimer = null;
+                const nav = record.nav;
+                if (nav === null) return;
+                const scrollable = nav.scrollHeight - nav.clientHeight;
+                if (scrollable <= 1) return;
+                const grid = measureGrid(nav);
+                if (grid === null || !(grid.step > 0)) return;
+                const snapped = Math.min(scrollable, Math.max(0, Math.round(nav.scrollTop / grid.step) * grid.step));
+                if (Math.abs(snapped - nav.scrollTop) > 0.5) nav.scrollTop = snapped;
+              }, SCROLL_SNAP_MS);
+            };
+            record.nav.addEventListener("wheel", record.onWheel, { passive: false });
+            record.nav.addEventListener("scroll", record.onScroll, { passive: true });
+          };
+
           /** 重新确认交接对象、窄轨状态与记忆的行数；上游重渲染后调用。 */
           const refresh = (record) => {
             const region = record.region;
             if (!region.isConnected) return;
             record.nav = findNav(region);
+            attachScrollSnap(record);
             setAttr(record.root, ROOT_ATTR);
             if (isRail(record.root)) setAttr(record.root, RAIL_ATTR);
             else clearAttr(record.root, RAIL_ATTR);
@@ -376,6 +429,12 @@ body [${ROOT_ATTR}][${DRAG_ATTR}] {
             root.removeEventListener("pointerdown", onPointerDown);
             root.removeEventListener("dblclick", onDoubleClick);
             if (record.observer !== null) record.observer.disconnect();
+            if (record.scrollNav !== null) {
+              record.scrollNav.removeEventListener("wheel", record.onWheel);
+              record.scrollNav.removeEventListener("scroll", record.onScroll);
+              record.scrollNav = null;
+            }
+            if (record.snapTimer !== null) window.clearTimeout(record.snapTimer);
             if (dragging !== null && dragging.record === record) endDrag();
             clearAttr(root, ROOT_ATTR);
             clearAttr(root, HOVER_ATTR);
@@ -393,6 +452,11 @@ body [${ROOT_ATTR}][${DRAG_ATTR}] {
               height: null,
               applying: false,
               observer: null,
+              scrollNav: null,
+              onWheel: null,
+              onScroll: null,
+              wheelAcc: 0,
+              snapTimer: null,
             };
             if (typeof ResizeObserver === "function") {
               record.observer = new ResizeObserver(() => {

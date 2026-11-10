@@ -60,6 +60,9 @@ check('workspace region keeps a minimum height', /REGION_MIN_PX\s*=\s*120/.test(
 check('magnetic floor is one row', /MIN_ROWS\s*=\s*1/.test(clientSource) && clientSource.includes('rowsForHeight'));
 check('row grid is measured, not hardcoded', clientSource.includes('measureGrid') && clientSource.includes('rowHeight'));
 check('dragging stops once every row is visible', clientSource.includes('scrollHeight'));
+check('scrolling snaps to whole rows', clientSource.includes('"wheel"') && clientSource.includes('scrollTop'));
+check('scrollbar scrolling is snapped back too', clientSource.includes('"scroll"') && clientSource.includes('SCROLL_SNAP_MS'));
+check('wheel is left alone when everything fits', clientSource.includes('scrollable <= 1'));
 check('drag seam is hit-tested in pixels', /HIT_PX\s*=\s*5/.test(clientSource));
 check('uses pointer events, not mouse-only ones', clientSource.includes('"pointerdown"') && clientSource.includes('"pointermove"'));
 check('remembers a row count, not pixels', clientSource.includes('nav-rows') && clientSource.includes('localStorage.getItem'));

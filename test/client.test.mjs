@@ -64,6 +64,7 @@ class FakeElement {
     this.listeners = new Map();
     this.role = 'plain';
     this.rowIndex = 0;
+    this.scrollTop = 0;
   }
   getAttribute(name) {
     return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null;
@@ -104,6 +105,10 @@ class FakeElement {
     if (this.role === 'nav') return naturalNav();
     return 0;
   }
+  get clientHeight() {
+    if (this.role === 'nav') return Math.min(navHeightNow(), naturalNav());
+    return 0;
+  }
   getBoundingClientRect() {
     if (this.role === 'row') {
       const top = layout.topOffset + this.rowIndex * (layout.rowHeight + layout.rowGap);
@@ -123,10 +128,14 @@ class FakeElement {
       clientY: 0,
       clientX: 0,
       button: 0,
-      preventDefault() {},
-      stopPropagation() {},
+      deltaY: 0,
+      defaultPrevented: false,
       ...event,
     };
+    payload.preventDefault = () => {
+      payload.defaultPrevented = true;
+    };
+    payload.stopPropagation = () => {};
     for (const handler of [...(this.listeners.get(type) ?? [])]) handler(payload);
     return payload;
   }
@@ -346,6 +355,28 @@ observer.trigger();
 check('a short window reclaims the workspace minimum', column.region.getBoundingClientRect().height === 120);
 check('and the nav pays in whole rows', column.root.style.getPropertyValue(NAV_VAR) === '112px');
 
+console.log('magnetic scroll');
+// 现在面板列表 112px、内容 188px → 可滚 76px，步长 38px（一行）
+const nav = column.nav;
+const wheel = (deltaY) => nav.dispatch('wheel', { deltaY });
+const firstWheel = wheel(100);
+check('one wheel notch moves exactly one row', nav.scrollTop === 38);
+check('wheel is taken over while the list scrolls', firstWheel.defaultPrevented === true);
+wheel(100);
+check('second notch reaches the bottom', nav.scrollTop === 76);
+wheel(100);
+check('scrolling stops at the last row', nav.scrollTop === 76);
+wheel(-100);
+check('wheel up returns one row', nav.scrollTop === 38);
+wheel(5);
+check('a tiny trackpad step is buffered', nav.scrollTop === 38);
+wheel(20);
+check('buffered steps then jump one row', nav.scrollTop === 76);
+nav.scrollTop = 50;
+nav.dispatch('scroll');
+await new Promise((resolve) => setTimeout(resolve, 220));
+check('a scrollbar drag snaps back to the nearest row', nav.scrollTop === 38);
+
 console.log('floor');
 layout.rootHeight = 800;
 const floorSeam = seamOf(column.region);
@@ -366,6 +397,8 @@ check('double click restores the automatic height', column.root.style.getPropert
 check('double click forgets the row count', storage.has(STORAGE_KEY) === false);
 column.root.dispatch('dblclick', { clientY: resetSeam + 80 });
 check('double click away from the seam does nothing', column.root.style.getPropertyValue(NAV_VAR) === '');
+const freeWheel = nav.dispatch('wheel', { deltaY: 100 });
+check('wheel is left alone when every row fits', freeWheel.defaultPrevented === false);
 
 console.log('collapsed rail');
 column.root.addClass('wtg9ga_collapsed');
@@ -392,6 +425,7 @@ FakeMutationObserver.last.trigger();
 await settle();
 check('a remembered row count is re-applied', third.root.style.getPropertyValue(NAV_VAR) === '74px');
 check('two rows are 2×36 + 2', layout.navHeight === 74);
+check('the new panel list keeps its scroll snap', third.nav.listenerCount('wheel') === 1 && third.nav.listenerCount('scroll') === 1);
 
 console.log('dispose');
 for (const dispose of disposers) dispose();
@@ -401,6 +435,7 @@ check('resize observers disconnected', FakeResizeObserver.instances.every((insta
 check('markers removed', third.root.getAttribute(ROOT_ATTR) === null && third.root.getAttribute(RAIL_ATTR) === null);
 check('inline height removed', third.root.style.getPropertyValue(NAV_VAR) === '');
 check('gesture listeners removed', ['pointermove', 'pointerleave', 'pointerdown', 'dblclick'].every((type) => third.root.listenerCount(type) === 0));
+check('scroll snap listeners removed', third.nav.listenerCount('wheel') === 0 && third.nav.listenerCount('scroll') === 0);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

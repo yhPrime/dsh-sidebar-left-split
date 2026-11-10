@@ -1,6 +1,6 @@
 {
   "name": "dsh-sidebar-left-split",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Drag the seam above the sidebar workspace list to resize it; the panel nav above scrolls when squeezed.",
   "type": "module",
